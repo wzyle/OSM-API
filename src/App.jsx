@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline, Circle } from
 import axios from "axios";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
+import "./App.css"; // Import file CSS
 
 // --- LEAFLET CONFIG & ICONS ---
 delete L.Icon.Default.prototype._getIconUrl;
@@ -30,7 +31,29 @@ const poiIcon = new L.Icon({
   shadowSize: [41, 41]
 });
 
-// --- HELPER FUNCTIONS ---
+// Bảng dịch mã thời tiết WMO sang tiếng Việt
+const weatherCodeMap = {
+  0: "☀️ Trời quang (Nắng)",
+  1: "🌤️ Ít mây",
+  2: "⛅ Mây rải rác",
+  3: "☁️ Nhiều mây",
+  45: "🌫️ Sương mù",
+  48: "🌫️ Sương mù đọng",
+  51: "🌧️ Mưa phùn nhẹ",
+  53: "🌧️ Mưa phùn",
+  55: "🌧️ Mưa phùn dày",
+  61: "☔ Mưa nhỏ",
+  63: "☔ Mưa vừa",
+  65: "☔ Mưa to",
+  80: "🌦️ Mưa rào nhẹ",
+  81: "🌦️ Mưa rào",
+  82: "⛈️ Mưa rào mạnh",
+  95: "⚡ Dông",
+  96: "⚡ Dông kèm mưa đá",
+  99: "⚡ Dông kèm mưa đá lớn"
+};
+
+// --- HELPER COMPONENTS ---
 
 function RecenterMap({ center, zoom }) {
   const map = useMap();
@@ -40,76 +63,88 @@ function RecenterMap({ center, zoom }) {
   return null;
 }
 
-function deg2rad(deg) {
-  return deg * (Math.PI / 180);
-}
-
-// NOTE: Distance calculation is removed from the main processing loop 
-//       because we now rely on Overpass's internal sorting (qt).
-
 export default function App() {
+  // State
   const [query, setQuery] = useState("");
-  const [nominatimResults, setNominatimResults] = useState([]); 
+  const [nominatimResults, setNominatimResults] = useState([]);
   const [places, setPlaces] = useState([]);
-  const [searchAreaPoint, setSearchAreaPoint] = useState(null); 
+  const [searchAreaPoint, setSearchAreaPoint] = useState(null);
   const [selectedPlaceId, setSelectedPlaceId] = useState(null);
-  const markerRefs = useRef({});
-  const [center, setCenter] = useState([10.7721, 106.6983]); 
+  const [center, setCenter] = useState([10.7721, 106.6983]);
   const [zoom, setZoom] = useState(13);
   const [myLocation, setMyLocation] = useState(null);
   const [routePath, setRoutePath] = useState([]);
   const [routeInfo, setRouteInfo] = useState(null);
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
+  const [weatherData, setWeatherData] = useState(null);
 
-  // --- API CALLS ---
+  const markerRefs = useRef({});
 
-  // Refactored Nominatim Search
+  // --- API LOGIC ---
+
   const searchNominatim = useCallback(async (searchQuery) => {
     if (searchQuery.length < 3) return;
-
     setLoading(true);
     setNominatimResults([]);
     setPlaces([]);
     setSearchAreaPoint(null);
-    setStatusMsg(`Đang tìm kiếm vị trí cho '${searchQuery}'...`);
+    setWeatherData(null);
+
+    setRoutePath([]);      // Xóa đường kẻ xanh trên bản đồ
+    setRouteInfo(null);
+
+    setStatusMsg(`Đang tìm kiếm '${searchQuery}'...`);
 
     try {
-      const geoUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${searchQuery}&addressdetails=1&limit=10`; 
-      const geoRes = await axios.get(geoUrl);
-      
-      if (geoRes.data.length > 0) {
-        setNominatimResults(geoRes.data);
-        setStatusMsg(`Chọn 1 kết quả để tìm các điểm thú vị xung quanh.`);
-        
+      const geoUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${searchQuery}&addressdetails=1&limit=10`;
+      const res = await axios.get(geoUrl);
+      if (res.data.length > 0) {
+        setNominatimResults(res.data);
+        setStatusMsg("Chọn một địa điểm từ danh sách.");
+        // setCenter([parseFloat(res.data[0].lat), parseFloat(res.data[0].lon)]);
+        // setZoom(12);
       } else {
-        setNominatimResults([]);
-        setStatusMsg("Không tìm thấy kết quả nào.");
+        setStatusMsg("Không tìm thấy kết quả.");
       }
     } catch (err) {
       console.error(err);
-      setStatusMsg("Lỗi kết nối Nominatim.");
+      setStatusMsg("Lỗi kết nối.");
     }
     setLoading(false);
-  }, []); // useCallback ensures this function is stable
+  }, []);
 
-  // 1. AUTOCOMPLETE/DEBOUNCE LOGIC
+  // Debounce search
   useEffect(() => {
     if (query.length < 3) {
-        setNominatimResults([]);
-        return;
+      setNominatimResults([]);
+      return;
     }
-    
-    // Set a timeout to delay the search
-    const delayDebounceFn = setTimeout(() => {
-        searchNominatim(query); 
-    }, 500); // 500ms delay
+    const timeout = setTimeout(() => searchNominatim(query), 500);
+    return () => clearTimeout(timeout);
+  }, [query, searchNominatim]);
 
-    // Cleanup function: clears timeout if query changes before 500ms passes
-    return () => clearTimeout(delayDebounceFn);
-  }, [query, searchNominatim]); 
+  const fetchWeatherData = async (lat, lon, displayName) => {
+    try {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&temperature_unit=celsius&timezone=auto`;
+      const res = await axios.get(url);
+      const data = res.data.current_weather;
+      
+      // Lấy mô tả từ bảng mã, nếu không có thì ghi "Không xác định"
+      const description = weatherCodeMap[data.weathercode] || "Không xác định";
 
-  // 2. POI Search (Faster QT Sort)
+      setWeatherData({
+        name: displayName.split(',')[0],
+        temp: data.temperature.toFixed(1),
+        desc: description, // Ví dụ: "☀️ Trời quang (Nắng)"
+        wind: data.windspeed // Lưu thêm gió để hiển thị phụ
+      });
+    } catch (err) {
+      console.error(err);
+      setWeatherData({ error: "Lỗi tải thời tiết" });
+    }
+  };
+
   const fetchInterestingPlaces = async (lat, lon) => {
     const radius = 2000;
 
@@ -163,266 +198,180 @@ export default function App() {
     }
   };
 
-
-
-  // 3. SELECTION HANDLER
-  const handleResultSelect = async (lat, lon) => {
-    setNominatimResults([]); 
+  const handleResultSelect = async (lat, lon, displayName) => {
+    setNominatimResults([]);
     setLoading(true);
     setRoutePath([]);
     setRouteInfo(null);
     setCenter([lat, lon]);
     setZoom(15);
-    setSearchAreaPoint([lat, lon]); 
+    setSearchAreaPoint([lat, lon]);
     
-    setStatusMsg(`Đang tìm 5 điểm thú vị quanh khu vực...`);
-    
+    fetchWeatherData(lat, lon, displayName);
     await fetchInterestingPlaces(lat, lon);
     setLoading(false);
   };
-  
-  // 4. ROUTING HANDLERS (Unchanged)
+
   const handleDirectionClick = (destLat, destLon) => {
     if (myLocation) {
       fetchRoute(myLocation[0], myLocation[1], destLat, destLon);
     } else {
-      if (!navigator.geolocation) {
-        alert("Trình duyệt không hỗ trợ GPS");
-        return;
-      }
+      if (!navigator.geolocation) return alert("Trình duyệt không hỗ trợ GPS");
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const { latitude, longitude } = pos.coords;
           setMyLocation([latitude, longitude]);
           fetchRoute(latitude, longitude, destLat, destLon);
         },
-        (err) => alert("Cần quyền truy cập vị trí để chỉ đường.")
+        () => alert("Cần quyền vị trí.")
       );
     }
   };
 
   const fetchRoute = async (startLat, startLon, endLat, endLon) => {
     setStatusMsg("Đang vẽ đường...");
-    const start = `${startLon},${startLat}`;
-    const end = `${endLon},${endLat}`;
-    const url = `https://router.project-osrm.org/route/v1/driving/${start};${end}?overview=full&geometries=geojson`;
-
     try {
+      const url = `https://router.project-osrm.org/route/v1/driving/${startLon},${startLat};${endLon},${endLat}?overview=full&geometries=geojson`;
       const res = await axios.get(url);
       const route = res.data.routes[0];
-      const coords = route.geometry.coordinates.map(c => [c[1], c[0]]);
-      
-      setRoutePath(coords);
+      setRoutePath(route.geometry.coordinates.map(c => [c[1], c[0]]));
       setRouteInfo({
-        dist: (route.distance / 1000).toFixed(1)
+        dist: (route.distance / 1000).toFixed(1),
+        time: (route.duration / 60).toFixed(0)
       });
-
       setStatusMsg("");
     } catch (err) {
       setStatusMsg("Không tìm thấy đường đi.");
     }
   };
 
-  // --- STYLES ---
-  const sidebarStyle = {
-    width: "350px",
-    height: "100vh",
-    background: "#ffffff",
-    boxShadow: "2px 0 10px rgba(0,0,0,0.1)",
-    zIndex: 1000,
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden"
-  };
-
-  const scrollAreaStyle = {
-    flex: 1,
-    overflowY: "auto",
-    padding: "15px",
-    background: "#f8f9fa"
-  };
-
-  const cardStyle = (isSelected) => ({
-    background: isSelected ? "#e6e6ff" : "white",
-    border: isSelected ? "1px solid #6610f2" : "1px solid #eee",
-    borderRadius: "8px",
-    padding: "12px",
-    marginBottom: "10px",
-    cursor: "pointer",
-    transition: "all 0.2s",
-    boxShadow: "0 2px 4px rgba(0,0,0,0.05)"
-  });
-
-  // --- COMPONENT RENDER ---
-
-  const renderContentList = () => {
-    // A. Show list of initial search results (Step 1: Autocomplete)
-    if (nominatimResults.length > 0) {
-      return nominatimResults.map((result) => (
-        <div 
-          key={result.place_id} 
-          style={cardStyle(false)}
-          onClick={() => handleResultSelect(parseFloat(result.lat), parseFloat(result.lon))}
-        >
-          <div style={{ fontWeight: "bold", fontSize: "15px", color: "#333" }}>{result.display_name.split(',')[0]}</div>
-          <div style={{ fontSize: "12px", color: "#666", marginTop: "5px" }}>{result.display_name}</div>
-          <div style={{ fontSize: "12px", color: "#007bff", marginTop: "5px" }}>(Click để tìm POI xung quanh)</div>
-        </div>
-      ));
-    }
-
-    // B. Show list of found POIs (Step 2)
-    return places.map((place) => (
-      <div 
-        key={place.id} 
-        style={cardStyle(selectedPlaceId === place.id)}
-        onClick={() => {
-          setSelectedPlaceId(place.id);
-          setCenter([place.lat, place.lon]);
-          setZoom(16);
-          const marker = markerRefs.current[place.id];
-          if (marker) marker.openPopup();
-        }}
-      >
-        <div style={{ fontWeight: "bold", fontSize: "15px", color: "#333" }}>{place.name}</div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "5px" }}>
-          <span style={{ fontSize: "12px", color: "#666", background: "#eee", padding: "2px 6px", borderRadius: "4px" }}>
-            {place.type}
-          </span>
-          {/* Note: Removed distance display as calculation is complex and removed for speed */}
-        </div>
-        
-        {selectedPlaceId === place.id && (
-          <button 
-            style={{ width: "100%", marginTop: "10px", padding: "8px", background: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-            onClick={(e) => {
-              e.stopPropagation(); 
-              handleDirectionClick(place.lat, place.lon);
-            }}
-          >
-            📍 Chỉ đường từ vị trí của bạn
-          </button>
-        )}
-      </div>
-    ));
-  };
-
-
+  // --- RENDER ---
   return (
-    <div style={{ display: "flex", flexDirection: "row", height: "100vh", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif" }}>
-      
-      {/* --- LEFT SIDEBAR --- */}
-      <div style={sidebarStyle}>
-        
-        {/* Header & Search */}
-        <div style={{ padding: "20px", borderBottom: "1px solid #eee" }}>
-          <h2 style={{ margin: "0 0 15px 0", color: "#333", fontSize: "20px" }}>🗺️ Công cụ tìm kiếm POI</h2>
-          
-          <form onSubmit={e => e.preventDefault()} style={{ display: "flex", gap: "5px" }}>
+    <div className="app-container">
+      {/* SIDEBAR */}
+      <div className="sidebar">
+        <div className="sidebar-header">
+          <h2 className="app-title">🗺️ Bản đồ Du lịch</h2>
+          <form className="search-form" onSubmit={e => e.preventDefault()}>
             <input
+              className="search-input"
               type="text"
-              placeholder="Nhập khu vực (VD: Hồ Gươm)..."
+              placeholder="Nhập khu vực (VD: Đà Lạt)..."
               value={query}
-              // onChange triggers the debounce/autocomplete search
-              onChange={(e) => setQuery(e.target.value)} 
-              style={{ flex: 1, padding: "10px", borderRadius: "6px", border: "1px solid #ddd", outline: "none" }}
+              onChange={(e) => setQuery(e.target.value)}
             />
-             {/* The "Tìm" button is optional now, search happens on type */}
-            <button type="button" onClick={() => searchNominatim(query)} disabled={loading} style={{ padding: "0 15px", background: "#6610f2", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: "bold" }}>
-              {loading ? "..." : "Tìm"}
-            </button>
+            <button className="search-button" disabled={loading} type="button">🔍</button>
           </form>
-
-          {/* Quick Buttons */}
-          <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
-             <button onClick={() => setQuery("Hà Nội")} style={{ flex:1, padding:"6px", fontSize:"12px", background:"#e9ecef", border:"none", borderRadius:"4px", cursor:"pointer" }}>Hà Nội</button>
-             <button onClick={() => setQuery("Huế")} style={{ flex:1, padding:"6px", fontSize:"12px", background:"#e9ecef", border:"none", borderRadius:"4px", cursor:"pointer" }}>Huế</button>
-             <button onClick={() => setQuery("Sài Gòn")} style={{ flex:1, padding:"6px", fontSize:"12px", background:"#e9ecef", border:"none", borderRadius:"4px", cursor:"pointer" }}>Sài Gòn</button>
+          <div className="quick-buttons">
+            <button className="city-btn" onClick={() => setQuery("Hà Nội")}>Hà Nội</button>
+            <button className="city-btn" onClick={() => setQuery("Huế")}>Huế</button>
+            <button className="city-btn" onClick={() => setQuery("Sài Gòn")}>Sài Gòn</button>
           </div>
         </div>
 
-        {/* Status & Route Info */}
         {(statusMsg || routeInfo) && (
-          <div style={{ padding: "10px 20px", background: "#fff3cd", fontSize: "14px", borderBottom: "1px solid #eee" }}>
-            {statusMsg && <div style={{color: "#856404"}}>{statusMsg}</div>}
-            {routeInfo && (
-              <div style={{ marginTop: "5px", color: "#155724", fontWeight: "bold" }}>
-                🚗 {routeInfo.dist} km
-              </div>
-            )}
+          <div className="status-bar">
+            {statusMsg && <div className="status-msg">{statusMsg}</div>}
+            {routeInfo && <div className="route-info">🚗 Khoảng cách: {routeInfo.dist} km</div>}
           </div>
         )}
 
-        {/* Results List Area */}
-        <div style={scrollAreaStyle}>
-          {(nominatimResults.length === 0 && places.length === 0 && !loading) && (
-            <div style={{ textAlign: "center", color: "#888", marginTop: "30px" }}>
-              Bắt đầu gõ để tìm kiếm khu vực...
-            </div>
+        <div className="scroll-area">
+          {!nominatimResults.length && !places.length && !loading && (
+            <div className="empty-state">Bắt đầu nhập để tìm kiếm...</div>
           )}
-          
-          {renderContentList()}
+
+          {/* LIST: Nominatim Results */}
+          {nominatimResults.map(result => (
+            <div 
+              key={result.place_id} 
+              className="place-card"
+              onClick={() => handleResultSelect(parseFloat(result.lat), parseFloat(result.lon), result.display_name)}
+            >
+              <div className="place-name">{result.display_name.split(',')[0]}</div>
+              <div className="place-hint">{result.display_name}</div>
+            </div>
+          ))}
+
+          {/* LIST: POI Results */}
+          {places.map(place => (
+            <div 
+              key={place.id} 
+              className={`place-card ${selectedPlaceId === place.id ? 'selected' : ''}`}
+              onClick={() => {
+                setSelectedPlaceId(place.id);
+                setCenter([place.lat, place.lon]);
+                setZoom(16);
+                if(markerRefs.current[place.id]) markerRefs.current[place.id].openPopup();
+              }}
+            >
+              <div className="place-name">{place.name}</div>
+              <div className="place-details">
+                <span className="place-tag">{place.type}</span>
+              </div>
+              {selectedPlaceId === place.id && (
+                <button 
+                  className="direction-btn"
+                  onClick={(e) => { e.stopPropagation(); handleDirectionClick(place.lat, place.lon); }}
+                >
+                  📍 Chỉ đường
+                </button>
+              )}
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* --- MAP AREA --- */}
-      <div style={{ flex: 1, position: "relative" }}>
+      {/* MAP */}
+      <div className="map-wrapper">
         <MapContainer center={center} zoom={zoom} style={{ height: "100%", width: "100%" }} zoomControl={false}>
-          <TileLayer
-            attribution='&copy; OSM contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
+          <TileLayer attribution='&copy; OSM contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
           <RecenterMap center={center} zoom={zoom} />
 
-          {/* Visualization of Search Area (2km radius) */}
-          {searchAreaPoint && (
-             <Circle 
-                center={searchAreaPoint} 
-                radius={2000} // 2000 meters = 2 km (Must match Overpass query)
-                pathOptions={{ color: '#dc3545', fillColor: '#dc3545', fillOpacity: 0.2, weight: 2 }}
-             />
-          )}
+          {searchAreaPoint && <Circle center={searchAreaPoint} radius={2000} pathOptions={{ color: '#dc3545', fillColor: '#dc3545', fillOpacity: 0.2 }} />}
+          {myLocation && <Marker position={myLocation} icon={userIcon}><Popup>Vị trí của bạn</Popup></Marker>}
 
-          {/* My Location Marker */}
-          {myLocation && (
-            <Marker position={myLocation} icon={userIcon}>
-               <Popup>Vị trí của bạn</Popup>
-            </Marker>
-          )}
-
-          {/* POI Markers */}
-          {places.map((place) => (
+          {places.map(place => (
             <Marker 
               key={place.id} 
               position={[place.lat, place.lon]} 
               icon={poiIcon}
-              ref={(el) => (markerRefs.current[place.id] = el)} 
-              eventHandlers={{
-                click: () => {
-                  setSelectedPlaceId(place.id);
-                }
-              }}
+              ref={el => markerRefs.current[place.id] = el}
+              eventHandlers={{ click: () => setSelectedPlaceId(place.id) }}
             >
               <Popup>
-                <b style={{fontSize:"14px"}}>{place.name}</b> <br/>
-                <span style={{color:"#6610f2", fontWeight: "bold"}}>{place.type}</span> <br/>
-                <button 
-                  style={{ marginTop: "5px", padding: "5px 10px", background: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                  onClick={() => handleDirectionClick(place.lat, place.lon)}
-                >
-                  Chỉ đường
-                </button>
+                <b>{place.name}</b><br/>{place.type}<br/>
+                <button className="popup-btn" onClick={() => handleDirectionClick(place.lat, place.lon)}>Chỉ đường</button>
               </Popup>
             </Marker>
           ))}
 
-          {/* Route Polyline */}
-          {routePath.length > 0 && (
-            <Polyline positions={routePath} color="#007bff" weight={5} opacity={0.8} />
-          )}
+          {routePath.length > 0 && <Polyline positions={routePath} color="#007bff" weight={5} opacity={0.8} />}
         </MapContainer>
-      </div>
 
+        {/* WEATHER WIDGET */}
+        {weatherData && (
+          weatherData.error ? (
+            <div className="weather-error">{weatherData.error}</div>
+          ) : (
+            <div className="weather-widget">
+              <h3 className="weather-header">Thời tiết tại {weatherData.name}</h3>
+              <div className="weather-content">
+                <div className="weather-temp">{weatherData.temp}°C</div>
+                <div className="weather-info">
+                  {/* Hiển thị Nắng/Mưa ở đây */}
+                  <div className="weather-desc" style={{fontWeight: "bold", fontSize: "16px"}}>
+                    {weatherData.desc}
+                  </div>
+                  <div style={{fontSize: "12px", color: "#666", marginTop: "4px"}}>
+                    Gió: {weatherData.wind} km/h
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        )}
+      </div>
     </div>
   );
 }
