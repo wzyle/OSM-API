@@ -78,6 +78,9 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const [weatherData, setWeatherData] = useState(null);
+  const [transInput, setTransInput] = useState("");
+  const [transResult, setTransResult] = useState("");
+  const [isTranslating, setIsTranslating] = useState(false);
 
   const markerRefs = useRef({});
 
@@ -245,6 +248,27 @@ export default function App() {
     }
   };
 
+  const handleTranslate = async () => {
+    if (!transInput.trim()) return;
+    setIsTranslating(true);
+    setTransResult("");
+
+    try {
+      // Gọi API dịch Anh -> Việt (Thay thế cho googletrans trong Python)
+      const res = await axios.get(`https://api.mymemory.translated.net/get?q=${transInput}&langpair=en|vi`);
+      
+      if (res.data && res.data.responseData) {
+        setTransResult(res.data.responseData.translatedText);
+      } else {
+        setTransResult("Lỗi dịch.");
+      }
+    } catch (err) {
+      console.error(err);
+      setTransResult("Lỗi kết nối.");
+    }
+    setIsTranslating(false);
+  };
+
   // --- RENDER ---
   return (
     <div className="app-container">
@@ -348,6 +372,26 @@ export default function App() {
 
           {routePath.length > 0 && <Polyline positions={routePath} color="#007bff" weight={5} opacity={0.8} />}
         </MapContainer>
+
+        <div className="translation-widget">
+            <h3 className="widget-title">🗣️ Dịch Anh - Việt</h3>
+            <div className="trans-box">
+              <input 
+                type="text" 
+                className="trans-input" 
+                placeholder="Nhập text..." 
+                value={transInput}
+                onChange={(e) => setTransInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleTranslate()}
+              />
+              <button className="trans-btn" onClick={handleTranslate} disabled={isTranslating}>
+                {isTranslating ? "." : "->"}
+              </button>
+            </div>
+            {transResult && (
+              <div className="trans-result">👉 {transResult}</div>
+            )}
+        </div>
 
         {/* WEATHER WIDGET */}
         {weatherData && (

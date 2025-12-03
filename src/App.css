@@ -279,3 +279,71 @@ body {
   border-radius: 4px;
   cursor: pointer;
 }
+
+/* --- WIDGET DỊCH THUẬT (MỚI) --- */
+.translation-widget {
+  position: absolute; /* Nổi lên trên bản đồ */
+  bottom: 20px;       /* Cách đáy 20px */
+  right: 10px;        /* Cách phải 10px */
+  z-index: 1000;      /* Hiển thị trên lớp bản đồ */
+  
+  width: 280px;       /* Cố định chiều rộng */
+  background-color: rgba(255, 255, 255, 0.95); /* Nền trắng */
+  padding: 15px;
+  border-radius: 8px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.2); /* Đổ bóng để nổi bật */
+}
+
+.widget-title {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+  color: #495057;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.trans-box {
+  display: flex;
+  gap: 5px;
+}
+
+.trans-input {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 13px;
+  outline: none;
+}
+
+.trans-input:focus {
+  border-color: #6610f2;
+  box-shadow: 0 0 0 2px rgba(102, 16, 242, 0.1);
+}
+
+.trans-btn {
+  padding: 8px 12px;
+  background-color: #6f42c1;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: bold;
+}
+
+.trans-btn:disabled {
+  background-color: #b8b8b8;
+  cursor: wait;
+}
+
+.trans-result {
+  margin-top: 10px;
+  padding: 10px;
+  background-color: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #212529;
+  font-style: italic;
+}
