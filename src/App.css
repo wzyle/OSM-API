@@ -257,10 +257,41 @@ body {
   cursor: pointer;
   font-weight: bold;
   font-size: 13px;
+  transition: background-color 0.2s;
 }
 
 .direction-btn:hover {
   background-color: #218838;
+}
+
+/* Save Button */
+.save-btn {
+  color: red;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 16px;
+  transition: transform 0.2s;
+}
+
+.save-btn:hover {
+  transform: scale(1.2);
+}
+
+/* Delete button */
+.delete-btn {
+  background: transparent;
+  border: none;
+  color: #c82333;
+  cursor: pointer;
+  font-weight: 600;
+  padding: 6px 8px;
+  border-radius: 6px;
+  transition: background-color 0.15s, transform 0.12s;
+}
+.delete-btn:hover {
+  background-color: rgba(200,40,60,0.08);
+  transform: translateY(-2px);
 }
 
 /* --- MAP --- */

@@ -4,6 +4,26 @@ import axios from "axios";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import "./App.css"; // Import file CSS
+import { initializeApp } from "firebase/app";
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
+import { getDatabase, ref, push, onValue, remove } from "firebase/database";
+
+// ... import xong
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBVAvBliq8Arfy_W5-LWoh4Zz5pZQKrzHE", 
+  authDomain: "travelapp-72671.firebaseapp.com",
+  databaseURL: "https://travelapp-72671-default-rtdb.asia-southeast1.firebasedatabase.app", // Quan trọng để lưu địa điểm [cite: 112]
+  projectId: "travelapp-72671",
+  storageBucket: "travelapp-72671.firebasestorage.app",
+  messagingSenderId: "269592970760",
+  appId: "1:269592970760:web:fb6a9e6e72ad73c083f3bd"
+};
+
+// Khởi tạo kết nối [cite: 35]
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getDatabase(app);
 
 // --- LEAFLET CONFIG & ICONS ---
 delete L.Icon.Default.prototype._getIconUrl;
@@ -75,14 +95,77 @@ export default function App() {
   const [myLocation, setMyLocation] = useState(null);
   const [routePath, setRoutePath] = useState([]);
   const [routeInfo, setRouteInfo] = useState(null);
+  const [destinationMarker, setDestinationMarker] = useState(null);
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const [weatherData, setWeatherData] = useState(null);
   const [transInput, setTransInput] = useState("");
   const [transResult, setTransResult] = useState("");
   const [isTranslating, setIsTranslating] = useState(false);
+  const [user, setUser] = useState(null);             // Lưu user đăng nhập [cite: 6]
+  const [savedPlaces, setSavedPlaces] = useState([]); // List địa điểm đã lưu
+  const [showSavedTab, setShowSavedTab] = useState(false); // Chuyển tab
 
   const markerRefs = useRef({});
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        // Nếu đã đăng nhập, tự động tải dữ liệu về [cite: 120]
+        const savedRef = ref(db, `users/${currentUser.uid}/saved_places`);
+        onValue(savedRef, (snapshot) => {
+          const data = snapshot.val();
+          const list = data ? Object.entries(data).map(([key, val]) => ({ firebaseKey: key, ...val })) : [];
+          setSavedPlaces(list);
+        });
+      } else {
+        setSavedPlaces([]);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Hàm Đăng nhập Google [cite: 126]
+  const handleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      // Dùng signInWithPopup thay vì redirect để tránh reload trang
+      const result = await signInWithPopup(auth, provider);
+      console.log("User Info:", result.user); // Xem thông tin user trả về
+    } catch (error) {
+      console.error("Lỗi đăng nhập:", error.code, error.message);
+      alert(`Đăng nhập thất bại: ${error.message}`); // Hiển thị thông báo lỗi cụ thể lên màn hình
+    }
+  };
+
+  // 3. Hàm Lưu địa điểm [cite: 118]
+  const handleSavePlace = async (place) => {
+    if (!user) return alert("Vui lòng đăng nhập!");
+    try {
+      const savedRef = ref(db, `users/${user.uid}/saved_places`);
+      await push(savedRef, {
+        id: place.id, name: place.name, lat: place.lat, lon: place.lon, type: place.type
+      });
+      alert("Đã lưu!");
+    } catch (error) {
+      console.error("Lỗi lưu địa điểm:", error);
+      alert("Lỗi lưu địa điểm!");
+    }
+  };
+
+  // Remove a saved place by firebase key
+  const handleRemoveSaved = async (firebaseKey) => {
+    if (!user) return alert("Vui lòng đăng nhập!");
+    try {
+      const itemRef = ref(db, `users/${user.uid}/saved_places/${firebaseKey}`);
+      await remove(itemRef);
+      alert("Đã xóa địa điểm.");
+    } catch (err) {
+      console.error("Lỗi xóa địa điểm:", err);
+      alert("Lỗi xóa địa điểm.");
+    }
+  };
 
   // --- API LOGIC ---
 
@@ -205,6 +288,7 @@ export default function App() {
     setNominatimResults([]);
     setLoading(true);
     setRoutePath([]);
+    setDestinationMarker(null);
     setRouteInfo(null);
     setCenter([lat, lon]);
     setZoom(15);
@@ -238,6 +322,9 @@ export default function App() {
       const res = await axios.get(url);
       const route = res.data.routes[0];
       setRoutePath(route.geometry.coordinates.map(c => [c[1], c[0]]));
+      setDestinationMarker([endLat, endLon]);
+      setCenter([endLat, endLon]);
+      setZoom(14);
       setRouteInfo({
         dist: (route.distance / 1000).toFixed(1),
         time: (route.duration / 60).toFixed(0)
@@ -274,26 +361,46 @@ export default function App() {
     <div className="app-container">
       {/* SIDEBAR */}
       <div className="sidebar">
+        <div style={{padding: "10px 20px", background: "#f1f1f1", display: "flex", justifyContent: "space-between"}}>
+          {user ? (
+            <div>
+               <b>{user.displayName}</b> 
+               <button onClick={() => signOut(auth)} style={{marginLeft:"5px", fontSize:"11px"}}>Thoát</button>
+            </div>
+          ) : (
+            <button onClick={handleLogin} style={{width:"100%", background:"#4285F4", color:"white", border:"none", padding:"5px"}}>
+              Đăng nhập Google
+            </button>
+          )}
+        </div>
         <div className="sidebar-header">
           <h2 className="app-title">🗺️ Bản đồ Du lịch</h2>
-          <form className="search-form" onSubmit={e => e.preventDefault()}>
-            <input
-              className="search-input"
-              type="text"
-              placeholder="Nhập khu vực (VD: Đà Lạt)..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <button className="search-button" disabled={loading} type="button">🔍</button>
-          </form>
-          <div className="quick-buttons">
-            <button className="city-btn" onClick={() => setQuery("Hà Nội")}>Hà Nội</button>
-            <button className="city-btn" onClick={() => setQuery("Huế")}>Huế</button>
-            <button className="city-btn" onClick={() => setQuery("Sài Gòn")}>Sài Gòn</button>
+          <div style={{display:"flex", gap:"10px", marginBottom:"10px"}}>
+            <button onClick={() => setShowSavedTab(false)} style={{flex:1}}>🔍 Tìm kiếm</button>
+            <button onClick={() => setShowSavedTab(true)} style={{flex:1}}>❤️ Đã lưu ({savedPlaces.length})</button>
           </div>
+          {!showSavedTab && (
+            <>
+              <form className="search-form" onSubmit={e => e.preventDefault()}>
+                <input
+                  className="search-input"
+                  type="text"
+                  placeholder="Nhập khu vực (VD: Đà Lạt)..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                <button className="search-button" disabled={loading} type="button">🔍</button>
+              </form>
+              <div className="quick-buttons">
+                <button className="city-btn" onClick={() => setQuery("Hà Nội")}>Hà Nội</button>
+                <button className="city-btn" onClick={() => setQuery("Huế")}>Huế</button>
+                <button className="city-btn" onClick={() => setQuery("Sài Gòn")}>Sài Gòn</button>
+              </div>
+            </>
+          )}
         </div>
 
-        {(statusMsg || routeInfo) && (
+        {!showSavedTab && (statusMsg || routeInfo) && (
           <div className="status-bar">
             {statusMsg && <div className="status-msg">{statusMsg}</div>}
             {routeInfo && <div className="route-info">🚗 Khoảng cách: {routeInfo.dist} km</div>}
@@ -301,48 +408,105 @@ export default function App() {
         )}
 
         <div className="scroll-area">
-          {!nominatimResults.length && !places.length && !loading && (
-            <div className="empty-state">Bắt đầu nhập để tìm kiếm...</div>
-          )}
-
-          {/* LIST: Nominatim Results */}
-          {nominatimResults.map(result => (
-            <div 
-              key={result.place_id} 
-              className="place-card"
-              onClick={() => handleResultSelect(parseFloat(result.lat), parseFloat(result.lon), result.display_name)}
-            >
-              <div className="place-name">{result.display_name.split(',')[0]}</div>
-              <div className="place-hint">{result.display_name}</div>
-            </div>
-          ))}
-
-          {/* LIST: POI Results */}
-          {places.map(place => (
-            <div 
-              key={place.id} 
-              className={`place-card ${selectedPlaceId === place.id ? 'selected' : ''}`}
-              onClick={() => {
-                setSelectedPlaceId(place.id);
-                setCenter([place.lat, place.lon]);
-                setZoom(16);
-                if(markerRefs.current[place.id]) markerRefs.current[place.id].openPopup();
-              }}
-            >
-              <div className="place-name">{place.name}</div>
-              <div className="place-details">
-                <span className="place-tag">{place.type}</span>
-              </div>
-              {selectedPlaceId === place.id && (
-                <button 
-                  className="direction-btn"
-                  onClick={(e) => { e.stopPropagation(); handleDirectionClick(place.lat, place.lon); }}
-                >
-                  📍 Chỉ đường
-                </button>
+          {/* --- TRƯỜNG HỢP 1: ĐANG Ở TAB TÌM KIẾM --- */}
+          {!showSavedTab ? (
+            <>
+              {/* Nếu chưa tìm gì cả thì hiện hướng dẫn */}
+              {!nominatimResults.length && !places.length && !loading && (
+                <div className="empty-state">Bắt đầu nhập để tìm kiếm...</div>
               )}
-            </div>
-          ))}
+
+              {/* Danh sách kết quả gợi ý từ Nominatim */}
+              {nominatimResults.map(result => (
+                <div 
+                  key={result.place_id} 
+                  className="place-card"
+                  onClick={() => handleResultSelect(parseFloat(result.lat), parseFloat(result.lon), result.display_name)}
+                >
+                  <div className="place-name">{result.display_name.split(',')[0]}</div>
+                  <div className="place-hint">{result.display_name}</div>
+                </div>
+              ))}
+
+              {/* Danh sách địa điểm vui chơi (POI) */}
+              {places.map(place => (
+                <div 
+                  key={place.id} 
+                  className={`place-card ${selectedPlaceId === place.id ? 'selected' : ''}`}
+                  onClick={() => {
+                    setSelectedPlaceId(place.id);
+                    setCenter([place.lat, place.lon]);
+                    setZoom(16);
+                    if(markerRefs.current[place.id]) markerRefs.current[place.id].openPopup();
+                  }}
+                >
+                  <div className="place-name">{place.name}</div>
+                      <div className="place-details">
+                        <span className="place-tag">{place.type}</span>
+                        {/* Nếu đã đăng nhập: hiển thị Lưu hoặc Xóa tùy trạng thái */}
+                        {user && (() => {
+                          const savedEntry = savedPlaces.find(sp => String(sp.id) === String(place.id));
+                          if (savedEntry) {
+                            return (
+                              <button
+                                className="delete-btn"
+                                style={{marginLeft: "auto"}}
+                                onClick={(e) => { e.stopPropagation(); handleRemoveSaved(savedEntry.firebaseKey); }}
+                              >
+                                🗑️ Xóa
+                              </button>
+                            );
+                          }
+                          return (
+                            <button
+                              className="save-btn"
+                              style={{marginLeft:"auto", border:"none", background:"transparent", cursor:"pointer", color:"#dc3545", fontWeight:"bold"}}
+                              onClick={(e) => {e.stopPropagation(); handleSavePlace(place)}}
+                            >
+                              ❤️ Lưu
+                            </button>
+                          );
+                        })()}
+                      </div>
+                  {selectedPlaceId === place.id && (
+                    <button 
+                      className="direction-btn"
+                      onClick={(e) => { e.stopPropagation(); handleDirectionClick(place.lat, place.lon); }}
+                    >
+                      📍 Chỉ đường
+                    </button>
+                  )}
+                </div>
+              ))}
+            </>
+          ) : (
+            /* --- TRƯỜNG HỢP 2: ĐANG Ở TAB ĐÃ LƯU --- */
+            <>
+              {savedPlaces.length === 0 ? (
+                <div className="empty-state">Bạn chưa lưu địa điểm nào.</div>
+              ) : (
+                savedPlaces.map(place => (
+                  <div 
+                    key={place.firebaseKey} 
+                    className="place-card" 
+                    onClick={() => { setCenter([place.lat, place.lon]); setZoom(16); }}
+                  >
+                    <div className="place-name">{place.name}</div>
+                      <div className="place-details">
+                          <span className="place-tag">{place.type}</span>
+                          <button className="delete-btn" style={{marginLeft: "8px"}} onClick={(e) => { e.stopPropagation(); handleRemoveSaved(place.firebaseKey); }}>🗑️ Xóa</button>
+                      </div>
+                      <button 
+                        className="direction-btn" 
+                        onClick={(e) => { e.stopPropagation(); handleDirectionClick(place.lat, place.lon); }}
+                      >
+                        📍 Chỉ đường
+                      </button>
+                  </div>
+                ))
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -369,6 +533,28 @@ export default function App() {
               </Popup>
             </Marker>
           ))}
+
+          {/* Saved places markers (only show when viewing Saved tab) */}
+          {showSavedTab && savedPlaces.map(place => (
+            <Marker
+              key={place.firebaseKey}
+              position={[place.lat, place.lon]}
+              icon={poiIcon}
+              eventHandlers={{ click: () => setSelectedPlaceId(place.firebaseKey) }}
+            >
+              <Popup>
+                <b>{place.name}</b><br/>{place.type}<br/>
+                <button className="popup-btn" onClick={() => handleDirectionClick(place.lat, place.lon)}>Chỉ đường</button>
+              </Popup>
+            </Marker>
+          ))}
+
+          {/* Destination marker shown when a route is drawn */}
+          {destinationMarker && (
+            <Marker position={destinationMarker} icon={poiIcon}>
+              <Popup>Điểm đến</Popup>
+            </Marker>
+          )}
 
           {routePath.length > 0 && <Polyline positions={routePath} color="#007bff" weight={5} opacity={0.8} />}
         </MapContainer>
