@@ -10,6 +10,8 @@ import { getDatabase, ref, push, onValue, remove } from "firebase/database";
 
 // ... import xong
 
+const AI_API_URL = "https://organologic-cathern-mooned.ngrok-free.dev";
+
 const firebaseConfig = {
   apiKey: "AIzaSyBVAvBliq8Arfy_W5-LWoh4Zz5pZQKrzHE", 
   authDomain: "travelapp-72671.firebaseapp.com",
@@ -105,6 +107,10 @@ export default function App() {
   const [user, setUser] = useState(null);             // Lưu user đăng nhập [cite: 6]
   const [savedPlaces, setSavedPlaces] = useState([]); // List địa điểm đã lưu
   const [showSavedTab, setShowSavedTab] = useState(false); // Chuyển tab
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiAnswer, setAiAnswer] = useState("");
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const [isAiOpen, setIsAiOpen] = useState(true);
 
   const markerRefs = useRef({});
 
@@ -356,6 +362,25 @@ export default function App() {
     setIsTranslating(false);
   };
 
+  const handleAskAI = async () => {
+    if (!aiQuestion.trim()) return;
+    setIsAiThinking(true);
+    setAiAnswer(""); // Reset câu trả lời cũ
+    
+    try {
+      // Gửi request POST đến endpoint /ask-ai trên Colab
+      const res = await axios.post(`${AI_API_URL}/ask-ai`, {
+        question: aiQuestion
+      });
+      // Giả sử backend trả về JSON dạng { "answer": "..." }
+      setAiAnswer(res.data.answer);
+    } catch (err) {
+      console.error(err);
+      setAiAnswer("⚠️ Lỗi kết nối Server AI (Check lại Colab/Ngrok).");
+    }
+    setIsAiThinking(false);
+  };
+
   // --- RENDER ---
   return (
     <div className="app-container">
@@ -559,48 +584,91 @@ export default function App() {
           {routePath.length > 0 && <Polyline positions={routePath} color="#007bff" weight={5} opacity={0.8} />}
         </MapContainer>
 
-        <div className="translation-widget">
-            <h3 className="widget-title">🗣️ Dịch Anh - Việt</h3>
-            <div className="trans-box">
+        {/* 1. WIDGET AI (GÓC TRÊN PHẢI - CÓ NÚT THU GỌN) */}
+        <div style={{ position: "absolute", top: "10px", right: "10px", zIndex: 1000, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+          <button 
+            onClick={() => setIsAiOpen(!isAiOpen)}
+            style={{ marginBottom: "5px", padding: "6px 12px", borderRadius: "20px", border: "none", background: "#6f42c1", color: "white", fontWeight: "bold", cursor: "pointer", boxShadow: "0 2px 5px rgba(0,0,0,0.2)" }}
+          >
+            {isAiOpen ? "🔽 Ẩn AI" : "🤖 Hỏi AI"}
+          </button>
+
+          {isAiOpen && (
+            <div style={{ width: "280px", background: "rgba(255, 255, 255, 0.95)", padding: "12px", borderRadius: "8px", boxShadow: "0 4px 15px rgba(0,0,0,0.15)", border: "1px solid #ddd" }}>
+                <div style={{display:"flex", gap:"5px"}}>
+                  <input 
+                    type="text" 
+                    placeholder="Hỏi địa điểm..." 
+                    value={aiQuestion} 
+                    onChange={(e) => setAiQuestion(e.target.value)} 
+                    onKeyDown={(e) => e.key === 'Enter' && handleAskAI()}
+                    style={{flex:1, padding:"6px", border:"1px solid #ccc", borderRadius:"4px", fontSize:"13px"}}
+                  />
+                  <button onClick={handleAskAI} disabled={isAiThinking} style={{background:"#6f42c1", color:"white", border:"none", borderRadius:"4px", padding:"0 10px", cursor:"pointer"}}>
+                    {isAiThinking ? "..." : "➤"}
+                  </button>
+                </div>
+                {aiAnswer && (
+                  <div style={{marginTop:"8px", padding:"8px", background:"#f3f0ff", borderRadius:"4px", fontSize:"12px", color:"#333", maxHeight:"120px", overflowY:"auto", lineHeight: "1.4"}}>
+                    {aiAnswer}
+                  </div>
+                )}
+            </div>
+          )}
+        </div>
+
+        {/* 2. WIDGET THỜI TIẾT (GÓC DƯỚI PHẢI - ĐÃ SỬA LỖI DÀI DÒNG) */}
+        {weatherData && !weatherData.error && (
+          <div style={{
+            position: "absolute", bottom: "25px", right: "10px", zIndex: 900,
+            background: "white", padding: "8px 12px", borderRadius: "8px",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.15)", display: "flex", alignItems: "center", gap: "10px",
+            maxWidth: "200px" // Giới hạn chiều rộng tối đa để không bị dài
+          }}>
+            <div style={{fontSize: "28px"}}>
+               {weatherData.desc.includes("Mưa") ? "🌧️" : weatherData.desc.includes("Nắng") ? "☀️" : "⛅"}
+            </div>
+            <div style={{overflow: "hidden"}}>
+              {/* Cắt ngắn tên địa điểm nếu quá dài */}
+              <div style={{fontWeight: "bold", fontSize: "13px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis"}}>
+                {weatherData.name}
+              </div>
+              <div style={{fontSize: "18px", fontWeight: "bold", color: "#333", lineHeight: "1.2"}}>
+                {weatherData.temp}°C
+              </div>
+              {/* Cắt ngắn mô tả thời tiết */}
+              <div style={{fontSize: "11px", color: "#666", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis"}}>
+                {weatherData.desc}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 3. WIDGET DỊCH (GÓC DƯỚI TRÁI - GỌN GÀNG) */}
+        <div style={{
+            position: "absolute", bottom: "25px", left: "10px", zIndex: 900,
+            background: "white", padding: "10px", borderRadius: "8px",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.15)", width: "220px"
+        }}>
+            <div style={{display: "flex", gap: "5px"}}>
               <input 
                 type="text" 
-                className="trans-input" 
-                placeholder="Nhập text..." 
+                placeholder="Dịch Anh-Việt..." 
                 value={transInput}
                 onChange={(e) => setTransInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleTranslate()}
+                style={{flex: 1, padding: "5px", borderRadius: "4px", border: "1px solid #ccc", fontSize: "12px"}}
               />
-              <button className="trans-btn" onClick={handleTranslate} disabled={isTranslating}>
-                {isTranslating ? "." : "->"}
+              <button onClick={handleTranslate} disabled={isTranslating} style={{padding: "5px 8px", background: "#17a2b8", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "12px"}}>
+                {isTranslating ? "..." : "Dịch"}
               </button>
             </div>
             {transResult && (
-              <div className="trans-result">👉 {transResult}</div>
+              <div style={{marginTop: "5px", fontSize: "12px", color: "#007bff", fontWeight: "bold", borderTop: "1px solid #eee", paddingTop: "4px"}}>
+                👉 {transResult}
+              </div>
             )}
         </div>
-
-        {/* WEATHER WIDGET */}
-        {weatherData && (
-          weatherData.error ? (
-            <div className="weather-error">{weatherData.error}</div>
-          ) : (
-            <div className="weather-widget">
-              <h3 className="weather-header">Thời tiết tại {weatherData.name}</h3>
-              <div className="weather-content">
-                <div className="weather-temp">{weatherData.temp}°C</div>
-                <div className="weather-info">
-                  {/* Hiển thị Nắng/Mưa ở đây */}
-                  <div className="weather-desc" style={{fontWeight: "bold", fontSize: "16px"}}>
-                    {weatherData.desc}
-                  </div>
-                  <div style={{fontSize: "12px", color: "#666", marginTop: "4px"}}>
-                    Gió: {weatherData.wind} km/h
-                  </div>
-                </div>
-              </div>
-            </div>
-          )
-        )}
       </div>
     </div>
   );
